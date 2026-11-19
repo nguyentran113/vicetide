@@ -1,112 +1,111 @@
-// VICETIDE hand-in program (gta6-01, round 2).
+// VICETIDE hand-in courier (gta6-01, round 3).
 //
-// What this file does, end to end:
-//   1. Works out where the hand-in goes: $MAKEFUN_OUTPUT_DIR when set, else /output
-//      (the grader's container mounts the hand-in directory at /output).
-//   2. Stages the deliverable there: the playable game from game/ (plain static files,
-//      three.js vendored under game/vendor/, no build step and no network) and the
-//      screenshots from screenshots/ (first file by name is the cover image).
-//   3. Asks the vendored make.fun library to summarise the staged tree into
-//      dossier.json, the one file the judge reads, and writes those bytes out.
+// The game is plain static files under game/ plus its screenshots; the
+// judge wants them summarised in one dossier.json. This program is the
+// courier between the repo and that dossier:
 //
-// The game itself lives entirely under game/; this program is only the courier.
-// Run it with Node 22+:  node main.ts
-// Try it locally with:   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-// Serve the game with:   node serve.ts   (then open http://localhost:8080)
+//   1. Pick the destination: $MAKEFUN_OUTPUT_DIR if the caller set it,
+//      otherwise /output, where the grader mounts the hand-in folder.
+//   2. Walk game/ and screenshots/ and copy every file across, in a
+//      stable order, refusing anything that is not a file or a folder.
+//   3. Feed the *staged* tree to the vendored dossier builder, write
+//      the bytes it returns to dossier.json, and report the result.
+//
+// Nothing here touches the game itself. Node 22+ runs it directly:
+//   node main.ts
+//   MAKEFUN_OUTPUT_DIR=out node main.ts   (local dry run)
+//   node serve.ts                        (play the staged game)
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-// The scorer's gate limits, mirrored on purpose: passing the same caps the judge
-// uses means this program refuses an oversized entry here, with a readable error,
-// instead of letting the scorer refuse it later. Of these, only text_max_bytes
-// changes the dossier's bytes; the rest are pure limits.
-const GATE = {
+// The judge's own limits, restated here so an oversized entry fails at
+// the courier with a readable complaint instead of at the scorer.
+// Only text_max_bytes shapes the dossier bytes; the rest are ceilings.
+const LIMITS = {
   text_max_bytes: 163_840,
   screenshots: { max: 4, max_bytes: 262_144 },
-  game_max_files: 993, // 993 game entries + screenshots/ + dossier.json = the grader's 1000-entry cap
+  game_max_files: 993, // 993 game files + the screenshots + dossier.json = 1000 entries
   game_max_bytes: 50_331_648, // 48 MiB
   game_path_max_bytes: 1000,
 };
 
-/** This file's own directory: game/ and screenshots/ sit beside it. */
-const repoRoot = dirname(fileURLToPath(import.meta.url));
+const here = dirname(fileURLToPath(import.meta.url));
 
-/** Where the hand-in is assembled: the grader's /output, or the local stand-in named by the env. */
-function handInDir(): string {
-  const fromEnv = process.env.MAKEFUN_OUTPUT_DIR;
-  return fromEnv === undefined || fromEnv === '' ? '/output' : fromEnv;
+function destination(): string {
+  const env = process.env.MAKEFUN_OUTPUT_DIR;
+  return env ? env : '/output';
 }
 
-/** Running totals for one copied tree, so the final report can say what was staged. */
-interface CopyTally {
+interface Staged {
   files: number;
   bytes: number;
 }
 
-/**
- * Copy a directory tree file by file (entries in name order, so the staging is
- * deterministic). Plain files and directories only: anything else is a mistake in
- * the repo, so it stops the hand-in instead of being silently skipped.
- */
-function copyTree(sourceDir: string, targetDir: string, tally: CopyTally): void {
-  mkdirSync(targetDir, { recursive: true });
-  const names = readdirSync(sourceDir).sort();
-  for (const name of names) {
-    const from = join(sourceDir, name);
-    const to = join(targetDir, name);
-    const info = statSync(from);
-    if (info.isDirectory()) {
-      copyTree(from, to, tally);
-    } else if (info.isFile()) {
-      copyFileSync(from, to);
-      tally.files += 1;
-      tally.bytes += info.size;
-    } else {
-      throw new Error(`cannot hand in ${from}: not a plain file or directory`);
+// Iterative walk with an explicit stack (no recursion): directories are
+// expanded in name order so the copy is deterministic from run to run.
+function copyTreeInto(fromRoot: string, toRoot: string, staged: Staged): void {
+  const pending: Array<[string, string]> = [[fromRoot, toRoot]];
+  while (pending.length > 0) {
+    const [fromDir, toDir] = pending.pop() as [string, string];
+    mkdirSync(toDir, { recursive: true });
+    const entries = readdirSync(fromDir, { withFileTypes: true }).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    );
+    // Push subdirectories in reverse so they pop in name order.
+    const subdirs: Array<[string, string]> = [];
+    for (const entry of entries) {
+      const from = join(fromDir, entry.name);
+      const to = join(toDir, entry.name);
+      if (entry.isDirectory()) {
+        subdirs.push([from, to]);
+      } else if (entry.isFile()) {
+        copyFileSync(from, to);
+        staged.files += 1;
+        staged.bytes += statSync(from).size;
+      } else {
+        throw new Error(`refusing to hand in ${from}: not a file or directory`);
+      }
     }
+    for (let i = subdirs.length - 1; i >= 0; i--) pending.push(subdirs[i]);
   }
 }
 
-/**
- * Stage game/ and screenshots/ from the repo into the hand-in directory and
- * return what was copied. The screenshots folder is created even when the repo
- * has none, so the dossier step reports the missing cover itself.
- */
-function stageDeliverable(targetRoot: string): CopyTally {
-  const tally: CopyTally = { files: 0, bytes: 0 };
-  copyTree(join(repoRoot, 'game'), join(targetRoot, 'game'), tally);
-  mkdirSync(join(targetRoot, 'screenshots'), { recursive: true });
-  const shotsDir = join(repoRoot, 'screenshots');
-  if (existsSync(shotsDir)) copyTree(shotsDir, join(targetRoot, 'screenshots'), tally);
-  return tally;
+function stageAll(destRoot: string): Staged {
+  const staged: Staged = { files: 0, bytes: 0 };
+  copyTreeInto(join(here, 'game'), join(destRoot, 'game'), staged);
+  // The screenshots folder must exist in the hand-in even when the repo
+  // has none, so the dossier builder itself reports the missing cover.
+  mkdirSync(join(destRoot, 'screenshots'), { recursive: true });
+  const shots = join(here, 'screenshots');
+  if (existsSync(shots)) copyTreeInto(shots, join(destRoot, 'screenshots'), staged);
+  return staged;
 }
 
-function main(): void {
-  const targetRoot = handInDir();
-  mkdirSync(targetRoot, { recursive: true });
+function run(): void {
+  const destRoot = destination();
+  mkdirSync(destRoot, { recursive: true });
 
-  const staged = stageDeliverable(targetRoot);
+  const staged = stageAll(destRoot);
 
-  // Build the dossier from the staged copy, not from the repo: the summary must
-  // describe exactly the bytes the judge receives, nothing else.
-  const dossierBytes = buildDossier(targetRoot, GATE);
-  const dossierPath = join(targetRoot, 'dossier.json');
-  writeFileSync(dossierPath, dossierBytes);
+  // Summarise the staged copy — the dossier must describe the exact
+  // bytes being handed in, not the repo they came from.
+  const dossier = buildDossier(destRoot, LIMITS);
+  writeFileSync(join(destRoot, 'dossier.json'), dossier);
 
-  const digest = createHash('sha256').update(dossierBytes).digest('hex');
+  const sha = createHash('sha256').update(dossier).digest('hex');
   console.error(
-    `vicetide: staged ${staged.files} files (${staged.bytes} bytes) into ${targetRoot}; ` +
-      `dossier.json is ${dossierBytes.length} bytes, sha256 ${digest}`,
+    `vicetide hand-in: ${staged.files} files, ${staged.bytes} bytes staged in ${destRoot}; ` +
+      `dossier.json ${dossier.length} bytes, sha256 ${sha}`,
   );
 }
 
 try {
-  main();
+  run();
 } catch (err) {
-  console.error(`vicetide: hand-in failed: ${err instanceof Error ? err.message : String(err)}`);
+  console.error(`vicetide hand-in failed: ${err instanceof Error ? err.message : String(err)}`);
   process.exitCode = 1;
 }

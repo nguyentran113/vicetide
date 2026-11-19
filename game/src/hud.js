@@ -1,31 +1,127 @@
-// HUD: DOM panels + 2D canvas minimap (roads, player arrow, cars, police, mission marker).
+// The HUD: DOM panels for cash, wanted stars, health, the current
+// objective and the speedometer, plus a 2D-canvas minimap that tracks
+// the player through Port Solano — roads, beach and sea, traffic,
+// police, and the gold mission marker.
+
 import { CITY } from './config.js';
-export function createHud(){
- const el=id=>document.getElementById(id);
- const hud=el('hud'),money=el('money'),stars=el('stars'),health=el('healthBar'),objective=el('objective'),speedo=el('speedo'),toast=el('toast'),cross=el('cross'),screen=el('screen'),card=el('card');
- const mm=el('minimap').getContext('2d');
- let toastTimer=null;
- function showToast(msg,ms=3200){toast.textContent=msg;clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.textContent='',ms);}
- function showScreen(html){screen.style.display='flex';card.innerHTML=html;}
- function hideScreen(){screen.style.display='none';}
- function drawMinimap(state,mission){const S=190,cx=S/2,cy=S/2,scale=S/560;
-  mm.fillStyle='#1d4d2b';mm.fillRect(0,0,S,S);
-  mm.fillStyle='#f2d492';mm.fillRect(0,cy+(195-state.player.z)*scale,S,60*scale);
-  mm.fillStyle='#1e90c8';mm.fillRect(0,cy+(245-state.player.z)*scale,S,80);
-  mm.strokeStyle='#3a3a46';mm.lineWidth=5;
-  for(const r of CITY.roads){mm.beginPath();mm.moveTo(cx+(r-state.player.x)*scale,0);mm.lineTo(cx+(r-state.player.x)*scale,S);mm.stroke();mm.beginPath();mm.moveTo(0,cy+(r-state.player.z)*scale);mm.lineTo(S,cy+(r-state.player.z)*scale);mm.stroke();}
-  const dot=(x,z,col,r=3)=>{mm.fillStyle=col;mm.beginPath();mm.arc(cx+(x-state.player.x)*scale,cy+(z-state.player.z)*scale,r,0,7);mm.fill();};
-  for(const c of state.cars)if(!c.police)dot(c.x,c.z,'#cccccc',2);
-  for(const c of state.cars)if(c.police)dot(c.x,c.z,'#ff3344',3.5);
-  if(mission&&mission.active)dot(mission.current.marker.x,mission.current.marker.z,'#ffd23f',4.5);
-  // player arrow
-  mm.save();mm.translate(cx,cy);mm.rotate(state.player.angle);mm.fillStyle='#22d4ee';mm.beginPath();mm.moveTo(0,-8);mm.lineTo(5,6);mm.lineTo(-5,6);mm.closePath();mm.fill();mm.restore();}
- return{hud,showToast,showScreen,hideScreen,
-  update(state,mission){money.textContent='$'+state.money;
-   stars.textContent='★'.repeat(Math.floor(state.wanted))+'☆'.repeat(5-Math.floor(state.wanted));
-   health.style.width=Math.max(0,state.health)+'%';health.style.background=state.health>35?'#3fe35e':'#e33';
-   objective.innerHTML=mission&&mission.active?('<b>'+mission.current.title+'</b><br>'+mission.current.text+(mission.timer>0?(' · ⏱ '+Math.ceil(mission.timer)+'s'):'')):'Free roam — find Marisol Vega (gold marker) or explore Port Solano.';
-   speedo.style.display=state.playerCar?'block':'none';if(state.playerCar)speedo.textContent=Math.round(Math.abs(state.playerSpeed)*3.6)+' km/h';
-   cross.style.display=!state.playerCar&&state.screen==='play'?'block':'none';
-   drawMinimap(state,mission);}};
+
+const MAP_SIZE = 190;
+const MAP_SCALE = MAP_SIZE / 560; // the map shows a 560-unit window
+
+export function createHud() {
+  const byId = (id) => document.getElementById(id);
+  const hud = byId('hud');
+  const moneyEl = byId('money');
+  const starsEl = byId('stars');
+  const healthEl = byId('healthBar');
+  const objectiveEl = byId('objective');
+  const speedoEl = byId('speedo');
+  const toastEl = byId('toast');
+  const crossEl = byId('cross');
+  const screenEl = byId('screen');
+  const cardEl = byId('card');
+  const map = byId('minimap').getContext('2d');
+
+  let toastTimer = null;
+  function showToast(msg, ms = 3200) {
+    toastEl.textContent = msg;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastEl.textContent = '';
+    }, ms);
+  }
+
+  function showScreen(html) {
+    screenEl.style.display = 'flex';
+    cardEl.innerHTML = html;
+  }
+
+  function hideScreen() {
+    screenEl.style.display = 'none';
+  }
+
+  // World → map coordinates, centred on the player.
+  function mapX(state, x) {
+    return MAP_SIZE / 2 + (x - state.player.x) * MAP_SCALE;
+  }
+  function mapY(state, z) {
+    return MAP_SIZE / 2 + (z - state.player.z) * MAP_SCALE;
+  }
+
+  function dot(state, x, z, color, radius) {
+    map.fillStyle = color;
+    map.beginPath();
+    map.arc(mapX(state, x), mapY(state, z), radius, 0, 7);
+    map.fill();
+  }
+
+  function drawMinimap(state, mission) {
+    map.fillStyle = '#1d4d2b';
+    map.fillRect(0, 0, MAP_SIZE, MAP_SIZE);
+    // Sand, then sea, along the southern shore.
+    map.fillStyle = '#f2d492';
+    map.fillRect(0, mapY(state, CITY.beachZ), MAP_SIZE, 60 * MAP_SCALE);
+    map.fillStyle = '#1e90c8';
+    map.fillRect(0, mapY(state, CITY.seaZ), MAP_SIZE, 80);
+
+    map.strokeStyle = '#3a3a46';
+    map.lineWidth = 5;
+    for (const r of CITY.roads) {
+      map.beginPath();
+      map.moveTo(mapX(state, r), 0);
+      map.lineTo(mapX(state, r), MAP_SIZE);
+      map.stroke();
+      map.beginPath();
+      map.moveTo(0, mapY(state, r));
+      map.lineTo(MAP_SIZE, mapY(state, r));
+      map.stroke();
+    }
+
+    for (const c of state.cars) {
+      if (c.police) dot(state, c.x, c.z, '#ff3344', 3.5);
+      else dot(state, c.x, c.z, '#cccccc', 2);
+    }
+    if (mission && mission.active) {
+      dot(state, mission.current.marker.x, mission.current.marker.z, '#ffd23f', 4.5);
+    }
+
+    // The player is an arrow at the centre, turned to his heading.
+    map.save();
+    map.translate(MAP_SIZE / 2, MAP_SIZE / 2);
+    map.rotate(state.player.angle);
+    map.fillStyle = '#22d4ee';
+    map.beginPath();
+    map.moveTo(0, -8);
+    map.lineTo(5, 6);
+    map.lineTo(-5, 6);
+    map.closePath();
+    map.fill();
+    map.restore();
+  }
+
+  function objectiveHtml(mission) {
+    if (!mission || !mission.active) {
+      return 'Free roam — find Marisol Vega (gold marker) or explore Port Solano.';
+    }
+    let html = '<b>' + mission.current.title + '</b><br>' + mission.current.text;
+    if (mission.timer > 0) html += ' · ⏱ ' + Math.ceil(mission.timer) + 's';
+    return html;
+  }
+
+  function update(state, mission) {
+    moneyEl.textContent = '$' + state.money;
+    const stars = Math.floor(state.wanted);
+    starsEl.textContent = '★'.repeat(stars) + '☆'.repeat(5 - stars);
+    healthEl.style.width = Math.max(0, state.health) + '%';
+    healthEl.style.background = state.health > 35 ? '#3fe35e' : '#e33';
+    objectiveEl.innerHTML = objectiveHtml(mission);
+    speedoEl.style.display = state.playerCar ? 'block' : 'none';
+    if (state.playerCar) {
+      speedoEl.textContent = Math.round(Math.abs(state.playerSpeed) * 3.6) + ' km/h';
+    }
+    crossEl.style.display = !state.playerCar && state.screen === 'play' ? 'block' : 'none';
+    drawMinimap(state, mission);
+  }
+
+  return { hud, showToast, showScreen, hideScreen, update };
 }
