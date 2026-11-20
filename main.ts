@@ -1,105 +1,74 @@
-// VICETIDE hand-in packager (gta6-01, round 4).
-//
-// The deliverable is a folder: the static game under game/, the four
-// screenshots, and one dossier.json summarising the lot for the
-// judge. This little program assembles that folder:
-//
-//   * The folder is $MAKEFUN_OUTPUT_DIR when the caller sets it, and
-//     /output otherwise (the grader mounts the hand-in there).
-//   * game/ and screenshots/ are mirrored into it recursively,
-//     entries in alphabetical order at every level so two runs of the
-//     packager produce byte-identical trees. Anything that is neither
-//     a plain file nor a plain directory aborts the run — a hand-in
-//     with a symlink hiding in it is not a hand-in worth making.
-//   * The dossier is then computed from the *mirrored* tree (never
-//     from the repo directly) by the vendored builder, and written
-//     beside the files it describes.
-//
-// Usage:  node main.ts
-//         MAKEFUN_OUTPUT_DIR=out node main.ts    (local rehearsal)
-//         node serve.ts                         (play the game)
+// main.ts — Vicetide's dossier builder (round 5 design).
+// Copies the playable tree (game/ plus screenshots/) into the output
+// directory with a breadth-first walk, then asks the vendored
+// make.fun library to fold that tree into dossier.json under the
+// bounty caps, and reports a one-line summary on stderr.
 
-import { createHash } from 'node:crypto';
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, copyFileSync, statSync, writeFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-// The gate's ceilings, restated so a breach is reported here in plain
-// words rather than discovered by the scorer. Of these, only
-// text_max_bytes influences the dossier's bytes; the rest are caps.
 const CAPS = {
-  text_max_bytes: 163_840,
-  screenshots: { max: 4, max_bytes: 262_144 },
-  game_max_files: 993, // 993 game entries + screenshots dir & files + dossier.json = the 1000-entry cap
-  game_max_bytes: 50_331_648, // 48 MiB
+  text_max_bytes: 163840,
+  screenshots: { max: 4, max_bytes: 262144 },
+  game_max_files: 993,
+  game_max_bytes: 48 * 1024 * 1024,
   game_path_max_bytes: 1000,
 };
 
-const repoRoot = dirname(fileURLToPath(import.meta.url));
-
-interface Tally {
-  files: number;
-  bytes: number;
-}
-
-function mirrorTree(sourceDir: string, targetDir: string, tally: Tally): void {
-  mkdirSync(targetDir, { recursive: true });
-  const names = readdirSync(sourceDir).sort();
-  for (const name of names) {
-    const from = join(sourceDir, name);
-    const to = join(targetDir, name);
-    const info = statSync(from, { throwIfNoEntry: true });
-    if (info.isDirectory()) {
-      mirrorTree(from, to, tally);
-    } else if (info.isFile()) {
-      copyFileSync(from, to);
-      tally.files += 1;
-      tally.bytes += info.size;
-    } else {
-      throw new Error(`cannot hand in ${from}: not a regular file or directory`);
+function mirrorTree(from: string, to: string): { files: number; bytes: number } {
+  let files = 0;
+  let bytes = 0;
+  const queue: Array<[string, string]> = [[from, to]];
+  while (queue.length > 0) {
+    const [srcDir, dstDir] = queue.pop() as [string, string];
+    mkdirSync(dstDir, { recursive: true });
+    const names = readdirSync(srcDir).sort();
+    for (const name of names) {
+      const src = join(srcDir, name);
+      const dst = join(dstDir, name);
+      const info = statSync(src);
+      if (info.isDirectory()) {
+        queue.push([src, dst]);
+      } else if (info.isFile()) {
+        copyFileSync(src, dst);
+        files += 1;
+        bytes += info.size;
+      } else {
+        throw new Error(`mirrorTree: refusing to stage non-regular entry ${src}`);
+      }
     }
   }
+  return { files, bytes };
 }
 
-function assemble(outDir: string): Tally {
-  const tally: Tally = { files: 0, bytes: 0 };
-  mirrorTree(join(repoRoot, 'game'), join(outDir, 'game'), tally);
-  // screenshots/ belongs in the hand-in even if the repo somehow has
-  // none — the dossier builder is the right place to complain about a
-  // missing cover image.
-  const shotsDir = join(outDir, 'screenshots');
-  mkdirSync(shotsDir, { recursive: true });
-  const repoShots = join(repoRoot, 'screenshots');
-  if (existsSync(repoShots)) mirrorTree(repoShots, shotsDir, tally);
-  return tally;
-}
-
-function main(): void {
+function run(): void {
+  const here = dirname(fileURLToPath(import.meta.url));
   const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
   mkdirSync(outDir, { recursive: true });
 
-  const tally = assemble(outDir);
-  const dossier = buildDossier(outDir, CAPS);
-  writeFileSync(join(outDir, 'dossier.json'), dossier);
+  let stagedFiles = 0;
+  let stagedBytes = 0;
+  for (const part of ['game', 'screenshots']) {
+    const src = join(here, part);
+    if (!existsSync(src)) throw new Error(`missing ${part}/ next to main.ts`);
+    const tally = mirrorTree(src, join(outDir, part));
+    stagedFiles += tally.files;
+    stagedBytes += tally.bytes;
+  }
 
-  const digest = createHash('sha256').update(dossier).digest('hex');
-  console.error(
-    `vicetide packager: mirrored ${tally.files} files (${tally.bytes} bytes) into ${outDir}; ` +
-      `dossier.json is ${dossier.length} bytes, sha256 ${digest}`,
+  const dossier = buildDossier(outDir, CAPS);
+  const dossierPath = join(outDir, 'dossier.json');
+  writeFileSync(dossierPath, dossier);
+  process.stderr.write(
+    `vicetide: staged ${stagedFiles} files (${stagedBytes} bytes); dossier.json is ${dossier.byteLength} bytes\n`
   );
 }
 
 try {
-  main();
+  run();
 } catch (err) {
-  console.error(`vicetide packager failed: ${err instanceof Error ? err.message : String(err)}`);
+  process.stderr.write(`vicetide: dossier build failed — ${err instanceof Error ? err.message : String(err)}\n`);
   process.exitCode = 1;
 }
