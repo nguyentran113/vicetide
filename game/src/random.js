@@ -1,29 +1,36 @@
-// A small deterministic random generator (mulberry32 family).
-// The city builder and the traffic spawner draw from one seeded stream so
-// that a given seed always produces the same Port Solano — that is what
-// makes the staged screenshot scenes reproducible.
+// Deterministic randomness for world generation.
+//
+// Port Solano is built from a single seeded stream: feed the same seed
+// in and the same city, traffic and crowd come out, which is what lets
+// the staged screenshot scenes be re-shot identically at any time.
+//
+// The generator is a splitmix-style counter hash: the state advances
+// by a fixed odd increment and is then scrambled with two xorshift /
+// multiply rounds. Period is 2^32, plenty for one city's worth of
+// coin flips.
 
 export function createRandom(seed = 1) {
-  let state = (seed >>> 0) || 1;
+  let counter = (seed >>> 0) || 1;
 
   function next() {
-    state = (state + 0x6d2b79f5) | 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), 1 | t);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    counter = (counter + 0x9e3779b9) >>> 0;
+    let z = counter;
+    z = Math.imul(z ^ (z >>> 16), 0x21f0aaad);
+    z = Math.imul(z ^ (z >>> 15), 0x735a2d97);
+    z = (z ^ (z >>> 15)) >>> 0;
+    return z / 4294967296;
   }
 
   function range(lo, hi) {
-    return lo + next() * (hi - lo);
+    return lo + (hi - lo) * next();
   }
 
   function int(lo, hi) {
-    return Math.floor(range(lo, hi + 1));
+    return lo + Math.floor(next() * (hi - lo + 1));
   }
 
-  function pick(arr) {
-    return arr[Math.floor(next() * arr.length)];
+  function pick(list) {
+    return list[Math.floor(next() * list.length)];
   }
 
   return { next, range, int, pick };

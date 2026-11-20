@@ -1,26 +1,26 @@
-// Play VICETIDE locally: a pocket static server for the game/ folder,
-// Node standard library only, no build step.
+// A tiny static file server for playing VICETIDE locally.
 //
-//   node serve.ts [--port 8080]   →   http://localhost:8080
+//   node serve.ts [--port 8080]     →     http://localhost:8080
 //
-// It answers with the content types a browser game needs, maps "/" to
-// index.html, and flatly refuses any path that climbs out of game/.
-// A development convenience — not a server to face the internet with.
+// It serves only the game/ folder, answers "/" with index.html, picks
+// a content type from the file extension, and refuses — with a 403 —
+// any URL whose normalised path would escape game/. Standard library
+// only; meant for a developer's own machine, not the open internet.
 
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const gameRoot = resolve(fileURLToPath(new URL('./game', import.meta.url)));
+const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
 
-function pickPort(argv: string[]): number {
-  const at = argv.indexOf('--port');
-  const candidate = at === -1 ? 8080 : Number(argv[at + 1]);
-  return Number.isInteger(candidate) && candidate > 0 && candidate < 65536 ? candidate : 8080;
+function portFromArgs(argv: string[]): number {
+  const flagAt = argv.indexOf('--port');
+  const wanted = flagAt === -1 ? 8080 : Number(argv[flagAt + 1]);
+  return Number.isInteger(wanted) && wanted > 0 && wanted < 65536 ? wanted : 8080;
 }
 
-const CONTENT_TYPES: Record<string, string> = {
+const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -44,14 +44,14 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ogg': 'audio/ogg',
 };
 
-function resolveInside(urlPath: string): string | null {
-  const withIndex = urlPath.endsWith('/') ? urlPath + 'index.html' : urlPath;
-  const file = resolve(join(gameRoot, normalize(withIndex)));
-  if (file !== gameRoot && !file.startsWith(gameRoot + sep)) return null;
-  return file;
+function locate(pathname: string): string | null {
+  const rel = pathname.endsWith('/') ? pathname + 'index.html' : pathname;
+  const candidate = resolve(join(root, normalize(rel)));
+  if (candidate !== root && !candidate.startsWith(root + sep)) return null;
+  return candidate;
 }
 
-function handle(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse): void {
+function serve(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse): void {
   let pathname: string;
   try {
     pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname);
@@ -60,7 +60,7 @@ function handle(request: import('node:http').IncomingMessage, response: import('
     return;
   }
 
-  const file = resolveInside(pathname);
+  const file = locate(pathname);
   if (file === null) {
     response.writeHead(403).end('forbidden');
     return;
@@ -69,7 +69,7 @@ function handle(request: import('node:http').IncomingMessage, response: import('
   let size: number;
   try {
     const info = statSync(file);
-    if (!info.isFile()) throw new Error('not a file');
+    if (!info.isFile()) throw new Error('directory');
     size = info.size;
   } catch {
     response.writeHead(404).end('not found');
@@ -77,14 +77,14 @@ function handle(request: import('node:http').IncomingMessage, response: import('
   }
 
   response.writeHead(200, {
-    'content-type': CONTENT_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
+    'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
     'content-length': size,
     'cache-control': 'no-store',
   });
   createReadStream(file).pipe(response);
 }
 
-const port = pickPort(process.argv.slice(2));
-createServer(handle).listen(port, '127.0.0.1', () => {
+const port = portFromArgs(process.argv.slice(2));
+createServer(serve).listen(port, '127.0.0.1', () => {
   console.log(`VICETIDE is playable at http://localhost:${port}`);
 });

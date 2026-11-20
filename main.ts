@@ -1,111 +1,105 @@
-// VICETIDE hand-in courier (gta6-01, round 3).
+// VICETIDE hand-in packager (gta6-01, round 4).
 //
-// The game is plain static files under game/ plus its screenshots; the
-// judge wants them summarised in one dossier.json. This program is the
-// courier between the repo and that dossier:
+// The deliverable is a folder: the static game under game/, the four
+// screenshots, and one dossier.json summarising the lot for the
+// judge. This little program assembles that folder:
 //
-//   1. Pick the destination: $MAKEFUN_OUTPUT_DIR if the caller set it,
-//      otherwise /output, where the grader mounts the hand-in folder.
-//   2. Walk game/ and screenshots/ and copy every file across, in a
-//      stable order, refusing anything that is not a file or a folder.
-//   3. Feed the *staged* tree to the vendored dossier builder, write
-//      the bytes it returns to dossier.json, and report the result.
+//   * The folder is $MAKEFUN_OUTPUT_DIR when the caller sets it, and
+//     /output otherwise (the grader mounts the hand-in there).
+//   * game/ and screenshots/ are mirrored into it recursively,
+//     entries in alphabetical order at every level so two runs of the
+//     packager produce byte-identical trees. Anything that is neither
+//     a plain file nor a plain directory aborts the run — a hand-in
+//     with a symlink hiding in it is not a hand-in worth making.
+//   * The dossier is then computed from the *mirrored* tree (never
+//     from the repo directly) by the vendored builder, and written
+//     beside the files it describes.
 //
-// Nothing here touches the game itself. Node 22+ runs it directly:
-//   node main.ts
-//   MAKEFUN_OUTPUT_DIR=out node main.ts   (local dry run)
-//   node serve.ts                        (play the staged game)
+// Usage:  node main.ts
+//         MAKEFUN_OUTPUT_DIR=out node main.ts    (local rehearsal)
+//         node serve.ts                         (play the game)
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-// The judge's own limits, restated here so an oversized entry fails at
-// the courier with a readable complaint instead of at the scorer.
-// Only text_max_bytes shapes the dossier bytes; the rest are ceilings.
-const LIMITS = {
+// The gate's ceilings, restated so a breach is reported here in plain
+// words rather than discovered by the scorer. Of these, only
+// text_max_bytes influences the dossier's bytes; the rest are caps.
+const CAPS = {
   text_max_bytes: 163_840,
   screenshots: { max: 4, max_bytes: 262_144 },
-  game_max_files: 993, // 993 game files + the screenshots + dossier.json = 1000 entries
+  game_max_files: 993, // 993 game entries + screenshots dir & files + dossier.json = the 1000-entry cap
   game_max_bytes: 50_331_648, // 48 MiB
   game_path_max_bytes: 1000,
 };
 
-const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = dirname(fileURLToPath(import.meta.url));
 
-function destination(): string {
-  const env = process.env.MAKEFUN_OUTPUT_DIR;
-  return env ? env : '/output';
-}
-
-interface Staged {
+interface Tally {
   files: number;
   bytes: number;
 }
 
-// Iterative walk with an explicit stack (no recursion): directories are
-// expanded in name order so the copy is deterministic from run to run.
-function copyTreeInto(fromRoot: string, toRoot: string, staged: Staged): void {
-  const pending: Array<[string, string]> = [[fromRoot, toRoot]];
-  while (pending.length > 0) {
-    const [fromDir, toDir] = pending.pop() as [string, string];
-    mkdirSync(toDir, { recursive: true });
-    const entries = readdirSync(fromDir, { withFileTypes: true }).sort((a, b) =>
-      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
-    );
-    // Push subdirectories in reverse so they pop in name order.
-    const subdirs: Array<[string, string]> = [];
-    for (const entry of entries) {
-      const from = join(fromDir, entry.name);
-      const to = join(toDir, entry.name);
-      if (entry.isDirectory()) {
-        subdirs.push([from, to]);
-      } else if (entry.isFile()) {
-        copyFileSync(from, to);
-        staged.files += 1;
-        staged.bytes += statSync(from).size;
-      } else {
-        throw new Error(`refusing to hand in ${from}: not a file or directory`);
-      }
+function mirrorTree(sourceDir: string, targetDir: string, tally: Tally): void {
+  mkdirSync(targetDir, { recursive: true });
+  const names = readdirSync(sourceDir).sort();
+  for (const name of names) {
+    const from = join(sourceDir, name);
+    const to = join(targetDir, name);
+    const info = statSync(from, { throwIfNoEntry: true });
+    if (info.isDirectory()) {
+      mirrorTree(from, to, tally);
+    } else if (info.isFile()) {
+      copyFileSync(from, to);
+      tally.files += 1;
+      tally.bytes += info.size;
+    } else {
+      throw new Error(`cannot hand in ${from}: not a regular file or directory`);
     }
-    for (let i = subdirs.length - 1; i >= 0; i--) pending.push(subdirs[i]);
   }
 }
 
-function stageAll(destRoot: string): Staged {
-  const staged: Staged = { files: 0, bytes: 0 };
-  copyTreeInto(join(here, 'game'), join(destRoot, 'game'), staged);
-  // The screenshots folder must exist in the hand-in even when the repo
-  // has none, so the dossier builder itself reports the missing cover.
-  mkdirSync(join(destRoot, 'screenshots'), { recursive: true });
-  const shots = join(here, 'screenshots');
-  if (existsSync(shots)) copyTreeInto(shots, join(destRoot, 'screenshots'), staged);
-  return staged;
+function assemble(outDir: string): Tally {
+  const tally: Tally = { files: 0, bytes: 0 };
+  mirrorTree(join(repoRoot, 'game'), join(outDir, 'game'), tally);
+  // screenshots/ belongs in the hand-in even if the repo somehow has
+  // none — the dossier builder is the right place to complain about a
+  // missing cover image.
+  const shotsDir = join(outDir, 'screenshots');
+  mkdirSync(shotsDir, { recursive: true });
+  const repoShots = join(repoRoot, 'screenshots');
+  if (existsSync(repoShots)) mirrorTree(repoShots, shotsDir, tally);
+  return tally;
 }
 
-function run(): void {
-  const destRoot = destination();
-  mkdirSync(destRoot, { recursive: true });
+function main(): void {
+  const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+  mkdirSync(outDir, { recursive: true });
 
-  const staged = stageAll(destRoot);
+  const tally = assemble(outDir);
+  const dossier = buildDossier(outDir, CAPS);
+  writeFileSync(join(outDir, 'dossier.json'), dossier);
 
-  // Summarise the staged copy — the dossier must describe the exact
-  // bytes being handed in, not the repo they came from.
-  const dossier = buildDossier(destRoot, LIMITS);
-  writeFileSync(join(destRoot, 'dossier.json'), dossier);
-
-  const sha = createHash('sha256').update(dossier).digest('hex');
+  const digest = createHash('sha256').update(dossier).digest('hex');
   console.error(
-    `vicetide hand-in: ${staged.files} files, ${staged.bytes} bytes staged in ${destRoot}; ` +
-      `dossier.json ${dossier.length} bytes, sha256 ${sha}`,
+    `vicetide packager: mirrored ${tally.files} files (${tally.bytes} bytes) into ${outDir}; ` +
+      `dossier.json is ${dossier.length} bytes, sha256 ${digest}`,
   );
 }
 
 try {
-  run();
+  main();
 } catch (err) {
-  console.error(`vicetide hand-in failed: ${err instanceof Error ? err.message : String(err)}`);
+  console.error(`vicetide packager failed: ${err instanceof Error ? err.message : String(err)}`);
   process.exitCode = 1;
 }

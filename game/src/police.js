@@ -1,53 +1,58 @@
-// Solano PD: one cruiser per wanted star (up to five). Cruisers spawn
-// on a ring around the player, steer straight at him, and try to pin
-// his car or corner him on foot — hold a pin long enough and the bust
-// lands. Ram him at speed and it costs him health instead.
+// Solano PD. The department fields one cruiser per wanted star, up
+// to five. A fresh cruiser materialises on a ring around the player,
+// homes in with a capped turn rate (so it sweeps in an arc instead of
+// snapping onto him), and has two ways to hurt him: ram him while he
+// is moving fast, which costs health, or pin him while he is nearly
+// stopped — hold the pin for a couple of seconds and he is busted.
+// When the stars fall, the extra cruisers are simply stood down.
 
-const MAX_UNITS = 5;
-const SPAWN_DISTANCE = 55;
-const PIN_DISTANCE = 7;
-const RAM_DISTANCE = 3.2;
-const BUST_SECONDS = 2.2;
+const FLEET_CAP = 5;
+const RING_RADIUS = 55;
+const PIN_RANGE = 7;
+const RAM_RANGE = 3.2;
+const PIN_SECONDS = 2.2;
 
 export function createPolice(scene, vehicles) {
   const units = [];
 
-  function spawn(state) {
-    const a = Math.random() * Math.PI * 2;
+  function dispatch(state) {
+    const bearing = Math.random() * Math.PI * 2;
     const car = vehicles.addCar(
-      state.player.x + Math.sin(a) * SPAWN_DISTANCE,
-      state.player.z + Math.cos(a) * SPAWN_DISTANCE,
+      state.player.x + Math.sin(bearing) * RING_RADIUS,
+      state.player.z + Math.cos(bearing) * RING_RADIUS,
       0,
       { police: true, color: 0xffffff },
     );
     car.speed = 0;
     units.push(car);
-    return car;
   }
 
-  function dismissExtra() {
+  function standDown() {
     const car = units.pop();
-    const i = vehicles.cars.indexOf(car);
-    if (i >= 0) vehicles.cars.splice(i, 1);
-    car.mesh.visible = false;
+    const at = vehicles.cars.indexOf(car);
+    if (at >= 0) vehicles.cars.splice(at, 1);
+    // Take the cruiser out of the world entirely. Merely hiding it
+    // would leave one invisible car in the scene graph for every
+    // stood-down unit, forever — over a long session of rising and
+    // falling heat that adds up to a street full of ghosts.
+    scene.remove(car.mesh);
   }
 
-  function chase(car, dt, state) {
+  // Drive one cruiser at the player; returns the gap that remains.
+  function pursue(car, dt, state) {
     const dx = state.player.x - car.x;
     const dz = state.player.z - car.z;
-    const dist = Math.hypot(dx, dz);
+    const gap = Math.hypot(dx, dz);
 
-    // Steer toward the player, capped turn rate so cruisers arc rather
-    // than snap onto him.
-    const target = Math.atan2(dx, dz);
-    let diff = ((target - car.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    const turn = Math.max(-2.2 * dt, Math.min(2.2 * dt, diff));
-    car.angle += turn;
+    const desired = Math.atan2(dx, dz);
+    let swing = ((desired - car.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    swing = Math.max(-2.2 * dt, Math.min(2.2 * dt, swing));
+    car.angle += swing;
 
-    // Flat out while closing in, gentle once alongside (that is what
-    // makes the pin possible instead of an endless demolition derby).
-    const topSpeed = 26 + state.wanted * 3;
-    const goal = dist > 6 ? topSpeed : 4;
+    // Sprint while closing, creep while alongside — creeping is what
+    // turns a chase into a pin instead of a demolition derby.
+    const ceiling = 26 + state.wanted * 3;
+    const goal = gap > 6 ? ceiling : 4;
     car.speed += (goal - car.speed) * dt * 1.2;
     car.x += Math.sin(car.angle) * car.speed * dt;
     car.z += Math.cos(car.angle) * car.speed * dt;
@@ -56,26 +61,25 @@ export function createPolice(scene, vehicles) {
 
     const bar = car.mesh.getObjectByName('lightbar');
     if (bar) bar.material.color.setHex(Math.floor(performance.now() / 300) % 2 ? 0xff2244 : 0x2266ff);
-
-    return dist;
+    return gap;
   }
 
   function update(dt, state, audio) {
-    const want = Math.floor(state.wanted);
-    while (units.length < want && units.length < MAX_UNITS) spawn(state);
-    while (units.length > want) dismissExtra();
+    const stars = Math.floor(state.wanted);
+    while (units.length < stars && units.length < FLEET_CAP) dispatch(state);
+    while (units.length > stars) standDown();
 
     let pinning = false;
     for (const car of units) {
-      const dist = chase(car, dt, state);
-      if (dist < PIN_DISTANCE && Math.abs(state.playerSpeed) < 4) pinning = true;
-      if (dist < RAM_DISTANCE && Math.abs(state.playerSpeed) > 10) {
+      const gap = pursue(car, dt, state);
+      if (gap < PIN_RANGE && Math.abs(state.playerSpeed) < 4) pinning = true;
+      if (gap < RAM_RANGE && Math.abs(state.playerSpeed) > 10) {
         state.health -= 18 * dt;
         state.shake = 0.4;
       }
     }
 
-    // A wail roughly every 1.4 seconds while any unit is active.
+    // One wail per ~1.4 s of wall time while anyone is on the chase.
     const now = performance.now();
     if (units.length && Math.floor(now / 1400) !== Math.floor((now - dt * 1000) / 1400)) {
       audio.siren();
@@ -83,7 +87,7 @@ export function createPolice(scene, vehicles) {
 
     if (pinning) {
       state.bustTimer += dt;
-      if (state.bustTimer > BUST_SECONDS) state.busted = true;
+      if (state.bustTimer > PIN_SECONDS) state.busted = true;
     } else {
       state.bustTimer = Math.max(0, state.bustTimer - dt);
     }

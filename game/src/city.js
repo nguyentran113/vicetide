@@ -1,74 +1,82 @@
-// Port Solano, built procedurally at load time: a grid of asphalt
-// streets with dashed centre lines and sidewalks, a tower on most
-// blocks, palms and street lamps along the kerbs, and the beach, sea,
-// pier and marina that close the south side of the map.
+// Port Solano's geometry, raised procedurally when the game loads.
+//
+// Layout: a carpet of grass, asphalt avenues running north–south the
+// whole map, cross-streets running east–west until the beach stops
+// them, a jittered tower or three on most blocks with lit windows
+// facing south, palms and lamps along the kerbs, and a shoreline —
+// sand, a plank pier, moored boats and the sea itself.
 
 import * as THREE from 'three';
 import { CITY } from './config.js';
 
-const BUILDING_COLORS = [0xffd9a0, 0xff9e7a, 0x7ae7ff, 0xf7f0d0, 0xffb3c8, 0xc8b8ff, 0xa0e8b0, 0xffe27a];
+const TOWER_PAINTS = [0xffd9a0, 0xff9e7a, 0x7ae7ff, 0xf7f0d0, 0xffb3c8, 0xc8b8ff, 0xa0e8b0, 0xffe27a];
 
-function lambert(color) {
+function matte(color) {
   return new THREE.MeshLambertMaterial({ color });
 }
 
-function flatPlane(width, depth, material) {
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), material);
-  mesh.rotation.x = -Math.PI / 2;
-  return mesh;
+function groundQuad(w, d, material, y = 0) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), material);
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = y;
+  return m;
 }
 
-function layRoads(scene, mats) {
-  // North–south avenues run the full height of the map.
+function paintStreets(scene, mats) {
+  // Avenues: full-length strips, dashed centre lines, raised kerbs.
   for (const x of CITY.roads) {
-    const strip = flatPlane(14, 470, mats.road);
-    strip.position.set(x, 0, -15);
-    scene.add(strip);
+    const avenue = groundQuad(14, 470, mats.asphalt);
+    avenue.position.set(x, 0, -15);
+    scene.add(avenue);
+
     for (let z = -240; z < 200; z += 16) {
-      const dash = flatPlane(0.5, 7, mats.line);
-      dash.position.set(x, 0.02, z);
+      const dash = groundQuad(0.5, 7, mats.paint, 0.02);
+      dash.position.x = x;
+      dash.position.z = z;
       scene.add(dash);
     }
-    // A sidewalk hugs each side of the avenue.
-    for (const side of [-8.2, 8.2]) {
-      const walk = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 470), mats.walk);
-      walk.position.set(x + side, 0.09, -15);
-      scene.add(walk);
+    for (const offset of [-8.2, 8.2]) {
+      const kerb = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 470), mats.kerb);
+      kerb.position.set(x + offset, 0.09, -15);
+      scene.add(kerb);
     }
   }
-  // East–west streets stop before the beach.
+  // Cross-streets: same treatment rotated ninety degrees, but they
+  // give up where the sand starts.
   for (const z of CITY.roads) {
     if (z >= 190) continue;
-    const strip = flatPlane(560, 14, mats.road);
-    strip.position.set(0, 0, z);
-    scene.add(strip);
+    const street = groundQuad(560, 14, mats.asphalt);
+    street.position.set(0, 0, z);
+    scene.add(street);
     for (let x = -260; x < 260; x += 16) {
-      const dash = flatPlane(7, 0.5, mats.line);
-      dash.position.set(x, 0.02, z);
+      const dash = groundQuad(7, 0.5, mats.paint, 0.02);
+      dash.position.x = x;
+      dash.position.z = z;
       scene.add(dash);
     }
   }
 }
 
-function raiseBuildings(scene, rng, mats) {
-  // One to three towers per block, jittered inside the block, with a
-  // column of lit windows pasted on the south face of each.
+function raiseTowers(scene, rng, mats) {
   for (let bx = -210; bx <= 210; bx += CITY.block) {
     for (let bz = -210; bz <= 150; bz += CITY.block) {
-      const count = rng.int(1, 3);
-      for (let i = 0; i < count; i++) {
+      const towersHere = rng.int(1, 3);
+      for (let i = 0; i < towersHere; i++) {
         const w = rng.range(16, 26);
         const d = rng.range(16, 26);
         const h = rng.range(12, 64);
-        const color = BUILDING_COLORS[rng.int(0, BUILDING_COLORS.length - 1)];
-        const tower = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lambert(color));
-        const tx = bx + rng.range(-12, 12);
-        const tz = bz + rng.range(-12, 12);
-        tower.position.set(tx, h / 2, tz);
+        const cx = bx + rng.range(-12, 12);
+        const cz = bz + rng.range(-12, 12);
+        const tower = new THREE.Mesh(
+          new THREE.BoxGeometry(w, h, d),
+          matte(TOWER_PAINTS[rng.int(0, TOWER_PAINTS.length - 1)]),
+        );
+        tower.position.set(cx, h / 2, cz);
         scene.add(tower);
+        // One column of glowing windows up the sun-facing side.
         for (let wy = 3; wy < h - 2; wy += 4) {
-          const win = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.6), mats.window);
-          win.position.set(tx, wy, tz + d / 2 + 0.06);
+          const win = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.6), mats.windowGlow);
+          win.position.set(cx, wy, cz + d / 2 + 0.06);
           scene.add(win);
         }
       }
@@ -78,60 +86,61 @@ function raiseBuildings(scene, rng, mats) {
 
 function plantPalms(scene, rng, mats) {
   const trunkGeo = new THREE.CylinderGeometry(0.25, 0.4, 6, 5);
-  const crownGeo = new THREE.ConeGeometry(3, 1.6, 6);
+  const frondsGeo = new THREE.ConeGeometry(3, 1.6, 6);
   for (let i = 0; i < 70; i++) {
-    const road = CITY.roads[rng.int(0, CITY.roads.length - 1)];
-    const x = road + (rng.next() < 0.5 ? -10 : 10);
+    const avenue = CITY.roads[rng.int(0, CITY.roads.length - 1)];
+    const x = avenue + (rng.next() < 0.5 ? -10 : 10);
     const z = rng.range(-250, 185);
-    const trunk = new THREE.Mesh(trunkGeo, mats.trunk);
+    const trunk = new THREE.Mesh(trunkGeo, mats.bark);
     trunk.position.set(x, 3, z);
     trunk.rotation.z = 0.08;
     scene.add(trunk);
-    const crown = new THREE.Mesh(crownGeo, mats.leaf);
-    crown.position.set(x + 0.4, 6.4, z);
-    scene.add(crown);
+    const fronds = new THREE.Mesh(frondsGeo, mats.leaves);
+    fronds.position.set(x + 0.4, 6.4, z);
+    scene.add(fronds);
   }
 }
 
-function raiseLamps(scene, mats) {
+function hangLamps(scene, mats) {
   const poleGeo = new THREE.CylinderGeometry(0.12, 0.12, 5, 5);
-  const bulbGeo = new THREE.SphereGeometry(0.4, 6, 6);
+  const globeGeo = new THREE.SphereGeometry(0.4, 6, 6);
   for (const x of CITY.roads) {
     for (let z = -240; z < 190; z += 45) {
-      const pole = new THREE.Mesh(poleGeo, mats.lampPost);
+      const pole = new THREE.Mesh(poleGeo, mats.postMetal);
       pole.position.set(x + 7.5, 2.5, z);
       scene.add(pole);
-      const bulb = new THREE.Mesh(bulbGeo, mats.lampBulb);
-      bulb.position.set(x + 7.5, 5.1, z);
-      scene.add(bulb);
+      const globe = new THREE.Mesh(globeGeo, mats.lampGlow);
+      globe.position.set(x + 7.5, 5.1, z);
+      scene.add(globe);
     }
   }
 }
 
-function buildShore(scene, mats) {
-  const sand = flatPlane(620, 60, mats.sand);
-  sand.position.set(0, 0.01, CITY.beachZ + 25);
+function buildWaterfront(scene, mats) {
+  const sand = groundQuad(620, 60, mats.sand, 0.01);
+  sand.position.x = 0;
+  sand.position.z = CITY.beachZ + 25;
   scene.add(sand);
 
-  const sea = flatPlane(620, 150, mats.sea);
-  sea.position.set(0, 0.02, CITY.seaZ + 70);
+  const sea = groundQuad(620, 150, mats.water, 0.02);
+  sea.position.x = 0;
+  sea.position.z = CITY.seaZ + 70;
   sea.name = 'sea';
   scene.add(sea);
 
-  // A short wooden pier reaches into the water by the marina.
+  // The marina pier: eight planks marching out over the water.
   for (let i = 0; i < 8; i++) {
-    const plank = new THREE.Mesh(new THREE.BoxGeometry(3, 0.5, 10), mats.pier);
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(3, 0.5, 10), mats.timber);
     plank.position.set(150, 0.4, CITY.seaZ + 10 + i * 11);
     scene.add(plank);
   }
-  // Moored boats: a hull and a mast, bobbing at anchor (they share the
-  // sea mesh's gentle swell because they sit at the same waterline).
+  // Five little boats at anchor, hull plus mast.
   for (let i = 0; i < 5; i++) {
     const boat = new THREE.Group();
-    const hull = new THREE.Mesh(new THREE.BoxGeometry(3, 1.2, 8), mats.hull);
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(3, 1.2, 8), mats.hullPaint);
     hull.position.y = 0.6;
     boat.add(hull);
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 7, 5), mats.mast);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 7, 5), mats.mastMetal);
     mast.position.y = 4;
     boat.add(mast);
     boat.position.set(130 + i * 11, 0, CITY.seaZ + 18);
@@ -142,45 +151,41 @@ function buildShore(scene, mats) {
 
 export function buildCity(scene, rng) {
   const mats = {
-    road: lambert(0x2e2e38),
-    walk: lambert(0xb8a88f),
-    grass: lambert(0x3f9e4d),
-    sand: lambert(0xf2d492),
-    sea: lambert(0x1e90c8),
-    line: new THREE.MeshBasicMaterial({ color: 0xf7e08a }),
-    window: new THREE.MeshBasicMaterial({ color: 0xfff6b0 }),
-    trunk: lambert(0x8a5a2b),
-    leaf: lambert(0x1fa84f),
-    lampPost: lambert(0x444455),
-    lampBulb: new THREE.MeshBasicMaterial({ color: 0xffe9a0 }),
-    pier: lambert(0x9a6a3a),
-    hull: lambert(0xffffff),
-    mast: lambert(0x888888),
+    asphalt: matte(0x2e2e38),
+    kerb: matte(0xb8a88f),
+    turf: matte(0x3f9e4d),
+    sand: matte(0xf2d492),
+    water: matte(0x1e90c8),
+    paint: new THREE.MeshBasicMaterial({ color: 0xf7e08a }),
+    windowGlow: new THREE.MeshBasicMaterial({ color: 0xfff6b0 }),
+    bark: matte(0x8a5a2b),
+    leaves: matte(0x1fa84f),
+    postMetal: matte(0x444455),
+    lampGlow: new THREE.MeshBasicMaterial({ color: 0xffe9a0 }),
+    timber: matte(0x9a6a3a),
+    hullPaint: matte(0xffffff),
+    mastMetal: matte(0x888888),
   };
 
-  const ground = flatPlane(620, 420, mats.grass);
-  ground.position.set(0, -0.05, -20);
-  scene.add(ground);
+  const lawn = groundQuad(620, 420, mats.turf, -0.05);
+  lawn.position.x = 0;
+  lawn.position.z = -20;
+  scene.add(lawn);
 
-  layRoads(scene, mats);
-  raiseBuildings(scene, rng, mats);
+  paintStreets(scene, mats);
+  raiseTowers(scene, rng, mats);
   plantPalms(scene, rng, mats);
-  raiseLamps(scene, mats);
-  const sea = buildShore(scene, mats);
+  hangLamps(scene, mats);
+  const sea = buildWaterfront(scene, mats);
 
   return { sea };
 }
 
-// The road coordinate nearest to an arbitrary value on one axis.
+// Snap a free coordinate to the closest street line on that axis.
 export function nearestRoad(v) {
-  let best = CITY.roads[0];
-  let bestDist = Infinity;
+  let winner = CITY.roads[0];
   for (const r of CITY.roads) {
-    const d = Math.abs(v - r);
-    if (d < bestDist) {
-      bestDist = d;
-      best = r;
-    }
+    if (Math.abs(v - r) < Math.abs(v - winner)) winner = r;
   }
-  return best;
+  return winner;
 }

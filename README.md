@@ -4,20 +4,20 @@
 [![rank](https://make.fun/badge/gta6-01/nguyentran113/vicetide/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/nguyentran113/vicetide/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-**VICETIDE** is an original 3D open-world crime game set in **Port Solano**, a fictional sun-drenched coastal city — golden-hour light, palm-lined boulevards, a procedural downtown of towers, a beach, a marina and open sea. You are **Rico Marín**, a broke wheelman. Marina fixer **Marisol Vega** offers a chain of **4 story missions** — collect a parcel, beat the clock on a golden-hour delivery, shake a 3-star police heat, and make the final run to the last boat out — paying cash for every job.
+**VICETIDE** drops you into **Port Solano**, a made-up coastal city baked in permanent golden hour: palm-shaded avenues, a downtown of procedurally raised towers, a working marina, a beach and open water. You play **Rico Marín**, a wheelman with empty pockets. Down by the marina, fixer **Marisol Vega** has work for you — **4 story missions** that pay cash: fetch a parcel, run a delivery against the clock, lose a 3-star police tail, and floor it to the last boat out of town.
 
-Everything is original: city, names, story and art are created for this game. It runs 100% offline in a desktop browser (three.js is vendored), with keyboard + mouse controls and fully procedural WebAudio sound (engine, sirens, gunshots, reward chimes, synth music — no audio files).
+Nothing here is borrowed: the city, the people, the story and the look were all created for this game. It plays entirely offline in a desktop browser (three.js ships in the repo), is driven with keyboard and mouse, and every sound — engine, sirens, gunfire, the little cash-register chime, the synth score — is synthesised live with WebAudio. There are no audio files.
 
-## Features
+## What's in the game
 
-- Procedural city: road grid with sidewalks, varied towers with lit windows, palms, street lamps, beach, sea and marina
-- Third-person on-foot play and arcade driving in any car, with a chase camera and speedometer
-- AI traffic on the road grid, parked cars, and pedestrians who stroll — and flee danger
-- 0–5 star wanted system: police cruisers spawn, chase and ram you; get pinned and you're **BUSTED**, lose your health and you're **WASTED**; hide long enough and the heat cools
-- Pistol combat on foot (raycast, muzzle flash, hit sparks), player health
-- Full HUD: 2D canvas minimap (roads, player arrow, cars, police, mission marker), cash, health bar, wanted stars, mission objective line, speedometer
-- Title / pause / BUSTED / WASTED / ending screens, and progress saved in `localStorage` (cash + mission) with a Continue button
-- Seeded RNG so screenshot scenes (`?shot=title|drive|foot|chase&seed=1`) are reproducible
+- A city generated at load: street grid with sidewalks, towers of varying heights with lit windows, palms, lamps, beach, sea and marina
+- On-foot third-person play plus arcade driving in any car you can reach, chase camera and speedometer included
+- Traffic that cruises the grid, cars parked at the kerb, and pedestrians who stroll the sidewalks — and scatter when things get loud
+- A 0–5 star wanted system: cruisers roll in, chase and ram; pinned means **BUSTED**, an empty health bar means **WASTED**, and staying out of sight lets the heat bleed off
+- Pistol fights on foot (hitscan with muzzle flash and impact sparks) and a health system
+- A full HUD: canvas minimap with roads, the player arrow, traffic, police and the mission marker; cash, health bar, wanted stars, the current objective and a speedometer
+- Title, pause, BUSTED, WASTED and ending screens; your cash and mission progress persist in `localStorage` behind a Continue button
+- A seeded generator, so the screenshot scenes (`?shot=title|drive|foot|chase&seed=1`) render identically every time
 
 ## Controls
 

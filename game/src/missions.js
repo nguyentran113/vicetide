@@ -1,9 +1,14 @@
-// The story of VICETIDE: four jobs for marina fixer Marisol Vega.
-// Each entry names its map marker, the payout, and the completion rule
-// the mission tracker in main.js enforces:
-//   reach  — just get to the marker
-//   timed  — get there before the countdown runs out
-//   escape — get there with the wanted level cooled down first
+// Marisol Vega's four jobs — the whole story of VICETIDE.
+//
+// Each job entry carries everything the tracker in main.js needs:
+// where to go (marker), what it pays (reward), what Marisol says when
+// she hands it over (from), and the rule that finishes it (need):
+//   reach  — arrive at the marker, that is all
+//   timed  — arrive before the countdown empties
+//   escape — arrive only once the wanted heat has cooled enough
+//
+// On the map a job is a gold beacon: a translucent pillar of light
+// with a spinning ring at its foot, visible across the city.
 
 import * as THREE from 'three';
 
@@ -46,16 +51,16 @@ export const MISSIONS = [
 export const STORY_INTRO =
   "Port Solano, golden hour. You are Rico Marín, a broke wheelman. Marina fixer Marisol Vega offers four jobs that could buy your way out — or put you in cuffs. Steal rides, dodge the Solano PD, and catch the last boat out.";
 
-// The gold beacon pair (a translucent pillar plus a ground ring) that
-// marks wherever the current job wants the player to go.
 export function createMissions(scene) {
-  const beamMaterial = new THREE.MeshBasicMaterial({
-    color: 0xffd23f,
-    transparent: true,
-    opacity: 0.4,
-    side: THREE.DoubleSide,
-  });
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 40, 10, 1, true), beamMaterial);
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.2, 2.2, 40, 10, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xffd23f,
+      transparent: true,
+      opacity: 0.4,
+      side: THREE.DoubleSide,
+    }),
+  );
   beam.position.y = 20;
   scene.add(beam);
 
